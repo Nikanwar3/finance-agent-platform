@@ -1,0 +1,17 @@
+date,description,debit,credit,balance,company_id,company_name,period
+2026-01-01,Beginning Balance,,,17798295.061830442,logisticspro,LogisticsPro,2026-01
+2026-01-02,Vendor Payment - Herman-Walker,167756.17342455857,,17630538.888405886,logisticspro,LogisticsPro,2026-01
+2026-01-04,Customer Payment - Reid Group,,278185.90958272107,17908724.79798861,logisticspro,LogisticsPro,2026-01
+2026-01-05,"Vendor Payment - Turner, Ortiz and Taylor",57837.4271231623,,17850887.370865446,logisticspro,LogisticsPro,2026-01
+2026-01-07,Vendor Payment - Torres Group,153202.2196006033,,17697685.151264843,logisticspro,LogisticsPro,2026-01
+2026-01-11,Vendor Payment - Davis PLC,120708.7961961972,,17576976.355068646,logisticspro,LogisticsPro,2026-01
+2026-01-12,Vendor Payment - Price LLC,180462.39492340345,,17396513.960145243,logisticspro,LogisticsPro,2026-01
+2026-01-16,Payroll,1166666.6666666667,,16229847.293478576,logisticspro,LogisticsPro,2026-01
+2026-01-18,"Customer Payment - Avery, Horton and Fernandez",,381528.11693003256,16611375.410408609,logisticspro,LogisticsPro,2026-01
+2026-01-18,"Vendor Payment - Newton, Moore and Perry",169384.6094952353,,16441990.800913373,logisticspro,LogisticsPro,2026-01
+2026-01-20,Vendor Payment - Bass PLC,36087.48291898357,,16405903.31799439,logisticspro,LogisticsPro,2026-01
+2026-01-22,Customer Payment - Crosby-Ramirez,,108211.65272224242,16514114.970716633,logisticspro,LogisticsPro,2026-01
+2026-01-23,"Customer Payment - Wood, Ramos and Sampson",,443180.88632904756,16957295.85704568,logisticspro,LogisticsPro,2026-01
+2026-01-24,Vendor Payment - Garcia-Jennings,19051.77924842021,,16938244.07779726,logisticspro,LogisticsPro,2026-01
+2026-01-27,"Customer Payment - Winters, Newman and Brown",,353451.11168277566,17291695.189480036,logisticspro,LogisticsPro,2026-01
+2026-01-28,Customer Payment - Lopez-Martinez,,260335.52918075802,17552030.718660794,logisticspro,LogisticsPro,2026-01

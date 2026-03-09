@@ -1,0 +1,15 @@
+pandas
+numpy
+faker
+openpyxl
+fastapi
+uvicorn
+agno
+pydantic
+sqlalchemy
+redis
+celery
+python-dotenv
+psycopg2-binary
+pytest
+requests
