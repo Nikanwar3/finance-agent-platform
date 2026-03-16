@@ -121,7 +121,7 @@ The video covers:
 ## 🧠 Design Philosophy & Trade-offs
 - **WebSocket over Polling**: For high-fidelity agent updates, native WebSocket streams were prioritized to deliver instantaneous feedback to the user regarding agent decision-making.
 - **Relational + In-Memory State**: PostgreSQL reliably stores the persistent entities (Company ARR, Close Progress, Metrics), whilst Redis handles transient agent communication, handoffs, and temporary workflow execution memories ensuring non-blocking operations.
-- **Agent Execution**: Agno provided an incredibly robust framework structure. I utilized dependency injection alongside an orchestrator pattern to handle fail-safes and concurrent parallel executions for groups resolving simple tasks versus sequential execution for interrelated tasks (like accruals and rev-rec requiring settled ledgers).
+- **Agent Execution**: Agno provided an incredibly robust framework structures. I utilized dependency injection alongside an orchestrator pattern to handle fail-safes and concurrent parallel executions for groups resolving simple tasks versus sequential execution for interrelated tasks (like accruals and rev-rec requiring settled ledgers).
 
 ---
 
