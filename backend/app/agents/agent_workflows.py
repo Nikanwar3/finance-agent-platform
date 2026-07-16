@@ -1,6 +1,9 @@
 from .base import create_base_agent, get_shared_memory, set_shared_memory
 from sqlalchemy.orm import Session
+from ..models.database import SessionLocal
 from ..models.domain import ActionLog, Issue, Metric, Company
+from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import json
 import logging
@@ -91,6 +94,60 @@ class IntercompanyEliminationAgent:
 
 # ... other agents follow similarly ...
 
+class AgentNode:
+    """One agent in the close-workflow dependency graph."""
+
+    def __init__(self, agent_id: str, agent, depends_on=()):
+        self.agent_id = agent_id
+        self.agent = agent
+        self.depends_on = tuple(depends_on)
+
+
+class DependencyGraph:
+    """
+    Directed acyclic graph of agent dependencies, scheduled with a level-order
+    topological sort (Kahn's algorithm). Agents with no remaining unmet
+    dependencies form one "level" and can safely run concurrently; the next
+    level is only released once every agent in the current level has finished.
+    """
+
+    def __init__(self, nodes):
+        self.nodes = {node.agent_id: node for node in nodes}
+        self.dependents = defaultdict(list)  # dependency_id -> [dependent_id, ...]
+        self.in_degree = {node.agent_id: len(node.depends_on) for node in nodes}
+
+        for node in nodes:
+            for dep_id in node.depends_on:
+                if dep_id not in self.nodes:
+                    raise ValueError(f"Unknown dependency '{dep_id}' for agent '{node.agent_id}'")
+                self.dependents[dep_id].append(node.agent_id)
+
+    def execution_levels(self):
+        """Return agent ids grouped into ordered levels safe to run concurrently."""
+        in_degree = dict(self.in_degree)
+        ready = deque(sorted(nid for nid, deg in in_degree.items() if deg == 0))
+        levels = []
+        visited = 0
+
+        while ready:
+            level = list(ready)
+            ready.clear()
+            levels.append(level)
+            visited += len(level)
+
+            for agent_id in level:
+                for dependent_id in self.dependents[agent_id]:
+                    in_degree[dependent_id] -= 1
+                    if in_degree[dependent_id] == 0:
+                        ready.append(dependent_id)
+
+        if visited != len(self.nodes):
+            stuck = [nid for nid, deg in in_degree.items() if deg > 0]
+            raise ValueError(f"Cycle detected in agent dependency graph: {stuck}")
+
+        return levels
+
+
 class OrchestratorAgent:
     def __init__(self):
         self.agent = create_base_agent(
@@ -101,38 +158,55 @@ class OrchestratorAgent:
         self.variance_agent = VarianceAnalysisAgent()
         self.accrual_agent = AccrualVerificationAgent()
         self.ic_agent = IntercompanyEliminationAgent()
-        
+
+        # Dependency graph for one company's close: trial-balance validation and
+        # variance analysis are independent and run in parallel; accrual
+        # verification requires a settled trial balance; intercompany
+        # elimination requires both accruals and variance analysis to be done.
+        self.graph = DependencyGraph([
+            AgentNode("trial_balance", self.tb_validator),
+            AgentNode("variance", self.variance_agent),
+            AgentNode("accrual", self.accrual_agent, depends_on=("trial_balance",)),
+            AgentNode("intercompany", self.ic_agent, depends_on=("accrual", "variance")),
+        ])
+
+    def _run_level(self, level_agent_ids, company_id: str):
+        """Run every agent in a level concurrently, each on its own DB session."""
+
+        def run_one(agent_id):
+            node = self.graph.nodes[agent_id]
+            session = SessionLocal()
+            try:
+                return node.agent.run(company_id, session)
+            finally:
+                session.close()
+
+        results = {}
+        with ThreadPoolExecutor(max_workers=len(level_agent_ids)) as pool:
+            futures = {pool.submit(run_one, agent_id): agent_id for agent_id in level_agent_ids}
+            for future in as_completed(futures):
+                agent_id = futures[future]
+                results[agent_id] = future.result()
+        return results
+
     def run_company_close(self, company_id: str, db: Session):
-        # Update progress
         company = db.query(Company).filter(Company.id == company_id).first()
         if not company:
             return False
-            
+
         company.status = "in_progress"
         db.commit()
-        
+
         log_agent_action(db, "Orchestrator", company_id, "Started Close Workflow", "Initiated month-end close")
-        
-        # Parallel Execution Group 1
-        self.tb_validator.run(company_id, db)
-        company.progress = 25
-        db.commit()
-        
-        self.variance_agent.run(company_id, db)
-        company.progress = 50
-        db.commit()
-        
-        # Sequential Execution Group 2
-        self.accrual_agent.run(company_id, db)
-        company.progress = 75
-        db.commit()
-        
-        # Cross Company Group 3
-        self.ic_agent.run(company_id, db)
-        
-        company.progress = 100
+
+        levels = self.graph.execution_levels()
+        for level_index, level_agent_ids in enumerate(levels):
+            self._run_level(level_agent_ids, company_id)
+            company.progress = round((level_index + 1) / len(levels) * 100)
+            db.commit()
+
         company.status = "completed"
         log_agent_action(db, "Orchestrator", company_id, "Completed Close Workflow", "Month-end close completed")
         db.commit()
-        
+
         return True

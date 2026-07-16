@@ -5,6 +5,7 @@ openpyxl
 fastapi
 uvicorn
 agno
+openai
 pydantic
 sqlalchemy
 redis
