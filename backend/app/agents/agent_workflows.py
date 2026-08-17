@@ -1,5 +1,6 @@
 from .base import create_base_agent, get_shared_memory, set_shared_memory
 from sqlalchemy.orm import Session
+from ..core.aws_client import upload_close_report
 from ..models.database import SessionLocal
 from ..models.domain import ActionLog, Issue, Metric, Company
 from collections import defaultdict, deque
@@ -209,4 +210,24 @@ class OrchestratorAgent:
         log_agent_action(db, "Orchestrator", company_id, "Completed Close Workflow", "Month-end close completed")
         db.commit()
 
+        self._archive_close_report(company_id, db)
+
         return True
+
+    def _archive_close_report(self, company_id: str, db: Session):
+        """Upload an immutable JSON summary of this close to S3 for audit
+        trail purposes. Best-effort: archival failures never fail the close
+        itself (see aws_client.upload_close_report)."""
+        issues = db.query(Issue).filter(Issue.company_id == company_id).all()
+        report = {
+            "company_id": company_id,
+            "generated_at": datetime.utcnow().isoformat(),
+            "issue_count": len(issues),
+            "issues": [
+                {"category": i.category, "description": i.description, "severity": i.severity}
+                for i in issues
+            ],
+        }
+        report_uri = upload_close_report(company_id, report)
+        if report_uri:
+            log_agent_action(db, "Orchestrator", company_id, "Archived Close Report", f"Uploaded to {report_uri}")

@@ -1,16 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 from typing import List
-from ..models.database import get_db, init_db
-from ..models.domain import Company, Issue, Metric, ActionLog
-from ..schemas.domain import CompanyResponse, IssueResponse, MetricResponse, ActionLogResponse
-from ..agents.agent_workflows import OrchestratorAgent
-from fastapi.background import BackgroundTasks
-import asyncio
-import json
+from ..models.database import get_db
+from ..models.domain import Company, Issue, ActionLog
+from ..schemas.domain import CompanyResponse, IssueResponse, ActionLogResponse
+from ..core.exceptions import CompanyNotFoundError, CloseAlreadyInProgressError
+from ..core.rate_limit import limiter
+from ..workers.tasks import run_company_close_task
 
 router = APIRouter()
-orchestrator = OrchestratorAgent()
+
+# Requests/minute allowed for the (cheap) list/read endpoints vs. the
+# (expensive — enqueues a multi-agent workflow) close-trigger endpoint.
+LIST_RATE_LIMIT = "60/minute"
+CLOSE_RATE_LIMIT = "5/minute"
+
 
 # WebSockets connection manager
 class ConnectionManager:
@@ -31,46 +35,57 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 @router.get("/companies", response_model=List[CompanyResponse])
-def get_companies(db: Session = Depends(get_db)):
+@limiter.limit(LIST_RATE_LIMIT)
+def get_companies(request: Request, db: Session = Depends(get_db)):
     return db.query(Company).all()
 
 @router.get("/companies/{company_id}", response_model=CompanyResponse)
-def get_company(company_id: str, db: Session = Depends(get_db)):
+@limiter.limit(LIST_RATE_LIMIT)
+def get_company(request: Request, company_id: str, db: Session = Depends(get_db)):
     company = db.query(Company).filter(Company.id == company_id).first()
     if not company:
-        raise HTTPException(status_code=404, detail="Company not found")
+        raise CompanyNotFoundError(company_id)
     return company
 
 @router.get("/companies/{company_id}/issues", response_model=List[IssueResponse])
-def get_company_issues(company_id: str, db: Session = Depends(get_db)):
+@limiter.limit(LIST_RATE_LIMIT)
+def get_company_issues(request: Request, company_id: str, db: Session = Depends(get_db)):
     return db.query(Issue).filter(Issue.company_id == company_id).all()
 
 @router.get("/issues", response_model=List[IssueResponse])
-def get_all_issues(db: Session = Depends(get_db)):
+@limiter.limit(LIST_RATE_LIMIT)
+def get_all_issues(request: Request, db: Session = Depends(get_db)):
     return db.query(Issue).all()
 
 @router.get("/logs", response_model=List[ActionLogResponse])
-def get_logs(db: Session = Depends(get_db)):
+@limiter.limit(LIST_RATE_LIMIT)
+def get_logs(request: Request, db: Session = Depends(get_db)):
     return db.query(ActionLog).order_by(ActionLog.timestamp.desc()).limit(100).all()
 
-def start_close_process(company_id: str, db: Session):
-    orchestrator.run_company_close(company_id, db)
-    # Ping websocket theoretically
-    event = {"event": "agent_update", "action": "close_completed", "company_id": company_id}
-    # Can't easily use asyncio inside sync thread without event loop trick
-    # In a real app we would use Celery + Redis PubSub for scalable websockets
-    
 @router.post("/close/{company_id}")
-def run_month_end_close(company_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    background_tasks.add_task(start_close_process, company_id, db)
-    return {"message": "Close process started"}
+@limiter.limit(CLOSE_RATE_LIMIT)
+def run_month_end_close(request: Request, company_id: str, db: Session = Depends(get_db)):
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise CompanyNotFoundError(company_id)
+    if company.status == "in_progress":
+        raise CloseAlreadyInProgressError(company_id)
+
+    # Enqueue onto the Celery/Redis task queue and return immediately — the
+    # actual multi-agent close workflow runs in a separate `worker` process
+    # (see docker-compose.yml), not on this request's thread.
+    run_company_close_task.delay(company_id)
+    return {"message": "Close process queued", "company_id": company_id}
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            data = await websocket.receive_text()
-            # Just keep the connection alive
+            await websocket.receive_text()
+            # Just keep the connection alive; server -> client updates are
+            # pushed via ConnectionManager.broadcast() from the Redis
+            # pub/sub relay (see services/pubsub_relay.py), not in response
+            # to anything the client sends here.
     except WebSocketDisconnect:
         manager.disconnect(websocket)
