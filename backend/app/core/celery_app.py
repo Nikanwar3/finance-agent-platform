@@ -4,7 +4,11 @@ from .config import settings
 
 celery_app = Celery(
     "finance_platform",
-    broker=settings.REDIS_URL,
+    # RabbitMQ as the task queue: durable delivery and ack semantics matter
+    # for the month-end close chain (a dropped step shouldn't be silent).
+    # Redis stays as the result backend — cheap to poll for task status and
+    # already running for the pub/sub relay/rate limiter.
+    broker=settings.RABBITMQ_URL,
     backend=settings.REDIS_URL,
 )
 

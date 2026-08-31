@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./finance.db")
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+    # Celery broker. RabbitMQ carries the task queue (durable delivery,
+    # per-queue routing for the close-workflow agents); Redis stays on as the
+    # result backend and the pub/sub relay used elsewhere (see agents/base.py,
+    # rate_limit.py) so those don't need to change.
+    RABBITMQ_URL: str = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672//")
+
     # Rate limiting (requests per window, parsed by slowapi's "N/period" syntax)
     RATE_LIMIT_READ: str = os.getenv("RATE_LIMIT_READ", "60/minute")
     RATE_LIMIT_CLOSE: str = os.getenv("RATE_LIMIT_CLOSE", "5/minute")

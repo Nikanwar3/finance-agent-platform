@@ -4,6 +4,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?style=for-the-badge&logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-316192?style=for-the-badge&logo=postgresql)
 ![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=for-the-badge&logo=redis)
+![RabbitMQ](https://img.shields.io/badge/RabbitMQ-3-FF6600?style=for-the-badge&logo=rabbitmq)
 ![Celery](https://img.shields.io/badge/Celery-Background%20Workers-37814A?style=for-the-badge&logo=celery)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker)
 ![AWS](https://img.shields.io/badge/AWS-ECS%20%7C%20S3-FF9900?style=for-the-badge&logo=amazon-aws)
@@ -12,9 +13,10 @@
 
 A backend platform for automating month-end financial close across a
 portfolio of companies: concurrent workflow execution, a Postgres system of
-record, Redis-backed background workers, real-time WebSocket progress
-streaming, and the operational plumbing (rate limiting, structured logging,
-centralized error handling, CI/CD to AWS) that a production API needs.
+record, RabbitMQ-queued/Redis-backed background workers, real-time WebSocket
+progress streaming, and the operational plumbing (rate limiting, structured
+logging, centralized error handling, CI/CD to AWS) that a production API
+needs.
 
 The financial-close logic itself is organized as a small set of concurrent,
 dependency-ordered workers (validation → variance/accrual → intercompany
@@ -28,9 +30,11 @@ instead of polling, and the reliability layer around all of it.
 ## 🌟 What this demonstrates
 
 - **Async request handling + background workers**: `POST /close/{id}`
-  enqueues onto a Celery/Redis task queue and returns immediately; the
-  actual multi-step workflow runs in a separate `worker` process, never on
-  the request thread.
+  enqueues a Celery task onto RabbitMQ and returns immediately; the actual
+  multi-step workflow runs in a separate `worker` process, never on the
+  request thread. RabbitMQ carries the queue (durable delivery/ack
+  semantics — a dropped step shouldn't be silent); Redis stays on as the
+  result backend plus everything below that was already using it.
 - **Real-time updates without polling**: the worker publishes progress
   events over Redis pub/sub; a relay thread in the API process forwards them
   to connected WebSocket clients.
@@ -73,13 +77,15 @@ FastAPI (backend)
    │  request middleware: structured logging → rate limiting → error handling
    │
    ├─ PostgreSQL          — companies, issues, action logs (system of record)
-   ├─ Redis               — Celery broker/backend, agent shared memory,
+   ├─ RabbitMQ             — Celery task queue (durable delivery for the
+   │                         close-workflow task)
+   ├─ Redis                — Celery result backend, agent shared memory,
    │                         rate-limit counters, close-event pub/sub
-   ├─ POST /close/{id}  → enqueues Celery task, returns immediately
+   ├─ POST /close/{id}  → enqueues Celery task onto RabbitMQ, returns immediately
    └─ WebSocket /ws     ← relayed close-event broadcasts (see below)
 
 Celery worker (separate process/container)
-   │  consumes the close-workflow task queue
+   │  consumes the close-workflow task queue off RabbitMQ
    ├─ runs the dependency-ordered workflow steps (concurrent where safe)
    ├─ publishes progress events to Redis pub/sub  ──► relayed to WebSocket
    └─ archives the completed report to S3
@@ -87,8 +93,8 @@ Celery worker (separate process/container)
 
 ### Tech Stack
 - **Backend**: Python, FastAPI, SQLAlchemy (ORM), Celery (background workers).
-- **Data/cache**: PostgreSQL (primary state), Redis (broker, shared memory,
-  rate limiting, pub/sub).
+- **Data/cache**: PostgreSQL (primary state), RabbitMQ (Celery task queue),
+  Redis (result backend, agent shared memory, rate limiting, pub/sub).
 - **Infra**: Docker & Docker Compose (local), AWS ECS Fargate + ECR + S3 +
   Secrets Manager (production — see `deploy/aws/README.md`).
 - **CI/CD**: GitHub Actions (`.github/workflows/`).
@@ -111,10 +117,10 @@ cp .env.example .env   # set OPENAI_API_KEY, optionally AWS_* for S3 archival
 docker-compose up -d --build
 ```
 
-This starts five services: `backend` (API), `worker` (Celery consumer),
-`frontend`, `postgres`, `redis`. The backend seeds Postgres with three
-months of sample financial data across 8 mock portfolio companies on first
-boot.
+This starts six services: `backend` (API), `worker` (Celery consumer),
+`frontend`, `postgres`, `redis`, `rabbitmq`. The backend seeds Postgres with
+three months of sample financial data across 8 mock portfolio companies on
+first boot.
 
 - **Dashboard**: [http://localhost:3000](http://localhost:3000)
 - **API docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
@@ -130,6 +136,8 @@ pytest -v
 
 Tests run against SQLite and an in-memory Redis/rate-limiter fallback, so no
 external services are required — the same setup GitHub Actions uses in CI.
+(Running the worker for real against RabbitMQ still needs a broker — set
+`RABBITMQ_URL`, or run `docker-compose up rabbitmq redis`.)
 
 ---
 
@@ -155,7 +163,7 @@ finance-agent-platform/
 ├── deploy/aws/                # ECS task definition + deployment architecture doc
 ├── .github/workflows/         # CI (test/lint/build) + CD (deploy to AWS)
 ├── frontend/                   # Next.js dashboard
-└── docker-compose.yml          # backend, worker, frontend, postgres, redis
+└── docker-compose.yml          # backend, worker, frontend, postgres, redis, rabbitmq
 ```
 
 ---
