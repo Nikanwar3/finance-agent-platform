@@ -11,6 +11,11 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
 # Node
 node_modules/
@@ -31,3 +36,9 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local Redis persistence snapshot
+dump.rdb
+
+# Local SQLite dev database
+*.db

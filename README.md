@@ -139,6 +139,24 @@ external services are required — the same setup GitHub Actions uses in CI.
 (Running the worker for real against RabbitMQ still needs a broker — set
 `RABBITMQ_URL`, or run `docker-compose up rabbitmq redis`.)
 
+### Verified
+
+29 tests passing, 77% line coverage (up from 24 tests / 75%). The Redis pub/sub
+→ WebSocket relay (`app/services/pubsub_relay.py`, `publish_close_event` in
+`app/workers/tasks.py`) had 0% coverage — a real background-thread,
+cross-process mechanism with no LLM dependency, so fully testable for free.
+Added tests covering both the `MockRedis` no-op fallback and, with a fake
+non-mock Redis client, the actual threaded relay path: subscribe, receive
+messages (bytes and str), skip non-"message" pub/sub events, and broadcast
+over a real asyncio event loop running on a separate thread — `pubsub_relay.py`
+is now 100% covered.
+
+**Not measured** — the actual close-workflow execution (`OrchestratorAgent`,
+instantiated with a real `OpenAIChat` client at module import) needs a live
+OpenAI key and would incur real cost per workflow run, so the 1,000-workflow
+throughput test and the mid-run worker-kill recovery test from the original
+benchmark plan aren't included in this pass.
+
 ---
 
 ## 📂 Repository Structure
